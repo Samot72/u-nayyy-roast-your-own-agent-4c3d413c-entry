@@ -4,7 +4,7 @@
 // (default /output). Gate: UTF-8, 1-200 characters (code points),
 // single line, not blank.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Shelf of candidate roast lines. Every line must be a real, specific
@@ -37,6 +37,10 @@ function validate(line: string): string | null {
       return "contains a control character";
     }
   }
+  // Reject lone surrogates: the line must survive a UTF-8 round-trip.
+  if (Buffer.from(line, "utf8").toString("utf8") !== line) {
+    return "not clean UTF-8";
+  }
   const n = charCount(line);
   if (n < 1 || n > 200) return `length ${n} outside 1-200 characters`;
   return null;
@@ -54,6 +58,21 @@ function main(): void {
   const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
   mkdirSync(outDir, { recursive: true });
   const outPath = join(outDir, "entry.txt");
+
+  // Determinism self-check: write the line twice to scratch files and
+  // require the bytes to be identical before writing the real output.
+  const scratchA = join(outDir, ".entry-check-a.txt");
+  const scratchB = join(outDir, ".entry-check-b.txt");
+  writeFileSync(scratchA, line, "utf8");
+  writeFileSync(scratchB, line, "utf8");
+  const bytesA = readFileSync(scratchA);
+  const bytesB = readFileSync(scratchB);
+  if (!bytesA.equals(bytesB)) {
+    throw new Error("determinism check failed: two writes differ");
+  }
+  rmSync(scratchA);
+  rmSync(scratchB);
+
   writeFileSync(outPath, line, "utf8");
 
   // Re-read and verify the bytes round-trip exactly.
